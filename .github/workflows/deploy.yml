@@ -1,0 +1,95 @@
+name: Deploy
+
+# Ships this plugin to forum.imrnes.team.
+#
+# A plugin change is inert until the forum restarts: NodeBB loads plugins with a
+# plain require() at boot, and the asset build bundles their templates and client
+# scripts against the installed set. So the deploy cannot be "copy the files" -
+# it has to run the forum's own deploy script, which fetches this repository into
+# node_modules, rebuilds, and restarts.
+#
+# That script lives in MythEclipse/NodeBB and is the same one its own deploy uses,
+# so there is one definition of "deploy the forum" rather than two that drift.
+# The key is restricted to a forced command, so a leak cannot open a shell.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: plugin-imrnes-ranks-deploy
+  # Never cancel: the deploy script restarts the forum, and an aborted restart
+  # leaves it between two releases.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: ${{ secrets.VPS_HOST }}
+  VPS_USER: ${{ secrets.VPS_USER }}
+
+jobs:
+  deploy:
+    name: Deploy to imrnes
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Install the deploy key
+        env:
+          KEY_PATH: ${{ runner.temp }}/deploy_key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          ssh-keygen -y -f "$KEY_PATH" >/dev/null
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Verify the host is reachable and the key is restricted
+        env:
+          DEPLOY_KEY: ${{ runner.temp }}/deploy_key
+        run: |
+          set -euo pipefail
+          ssh -i "$DEPLOY_KEY" -o BatchMode=yes -o ConnectTimeout=20 \
+              "$VPS_USER@$VPS_HOST" "status"
+
+          if ssh -i "$DEPLOY_KEY" -o BatchMode=yes -o ConnectTimeout=20 \
+               "$VPS_USER@$VPS_HOST" "id" 2>/dev/null; then
+            echo "::error::the deploy key obtained a shell - refusing to deploy"
+            exit 1
+          fi
+          echo "key is restricted to the deploy allowlist (shell refused as expected)"
+
+      - name: Deploy
+        env:
+          DEPLOY_KEY: ${{ runner.temp }}/deploy_key
+        run: |
+          set -euo pipefail
+          # The forum's deploy script fetches every plugin repository it installs,
+          # so running it here picks up this plugin's new HEAD. It also rebuilds
+          # and restarts, which is what makes the change take effect at all.
+          ssh -i "$DEPLOY_KEY" -o BatchMode=yes -o ConnectTimeout=20 \
+              "$VPS_USER@$VPS_HOST" "deploy"
+
+      - name: Verify the forum came back
+        run: |
+          set -euo pipefail
+          # The deploy script already asserts loopback. What this adds is that the
+          # forum is still serving after a restart triggered from a plugin push -
+          # the failure mode being a plugin that loads badly enough to stop boot.
+          resolved=$(dig +short forum.imrnes.team @1.1.1.1 | tail -1)
+          if [ "$resolved" = "$VPS_HOST" ]; then
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 \
+                     "https://forum.imrnes.team/api/config")
+            echo "GET /api/config -> $code"
+            [ "$code" = "200" ] || { echo "::error::forum returned $code after deploy"; exit 1; }
+          else
+            echo "::warning::forum.imrnes.team resolves to ${resolved:-nothing}, not $VPS_HOST"
+            echo "::warning::public check skipped; the deploy script verified loopback"
+          fi
+
+      - name: Clean up the key
+        if: always()
+        run: rm -f "${{ runner.temp }}/deploy_key"
