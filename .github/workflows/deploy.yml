@@ -8,7 +8,7 @@ name: Deploy
 # it has to run the forum's own deploy script, which fetches this repository into
 # node_modules, rebuilds, and restarts.
 #
-# That script lives in MythEclipse/NodeBB and is the same one its own deploy uses,
+# That script lives in IMRNES/NodeBB and is the same one its own deploy uses,
 # so there is one definition of "deploy the forum" rather than two that drift.
 # The key is restricted to a forced command, so a leak cannot open a shell.
 on:
