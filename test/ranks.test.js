@@ -204,34 +204,39 @@ async function withLadder(levels, fn) {
     });
 
     await test('getLinkTags points at a stylesheet the build will actually serve', async () => {
-        // The badge CSS is only reachable if two things agree: the href NodeBB
-        // renders, and the directory the build copies into build/public/plugins.
-        // The build copies exactly the directories named in plugin.json's
-        // `staticDirs` and nothing else, so a plugin whose CSS is referenced but
-        // whose plugin.json omits that key serves a 404 - silently, because the
-        // page still renders and only the styling is missing.
+        // The badge CSS is only reachable if three things agree, and a mismatch in
+        // any of them produces a 404 with nothing in any log: the page still
+        // renders, only the styling is missing.
+        //
+        //   1. plugin.json declares `staticDirs`, or nothing is copied at all.
+        //   2. The href is rooted at the plugin id, which is where the copy lands.
+        //   3. The KEY in staticDirs appears as a path segment in the href -
+        //      `{"public": "public"}` serves /<id>/public/ranks.css, so an href of
+        //      /<id>/ranks.css misses even though both halves look right.
         const data = { links: [] };
-        // getLinkTags takes only `data` and returns it: it is not one of the
-        // callback-style hooks, so awaiting the call is the whole contract.
         const out = await plugin.getLinkTags(data);
         const tag = out.links.find((l) => l.rel === 'stylesheet' && l.href.endsWith('ranks.css'));
         assert.ok(tag, 'a ranks.css stylesheet link must be injected');
 
         const manifest = require(path.join(__dirname, '..', 'plugin.json'));
-        assert.strictEqual(
-            tag.href,
-            `/assets/plugins/${manifest.id}/ranks.css`,
-            'the href must be rooted at the plugin id, which is where staticDirs lands',
+        const dirs = manifest.staticDirs || {};
+        assert.ok(Object.keys(dirs).length > 0, 'plugin.json must declare staticDirs or nothing is copied into build/public');
+
+        const prefix = `/assets/plugins/${manifest.id}/`;
+        assert.ok(tag.href.startsWith(prefix), `the href must be rooted at ${prefix}`);
+
+        // The served path is build/public/plugins/<id>/<key>/<file>, so the
+        // segment after the id has to be one of the declared keys.
+        const segment = tag.href.slice(prefix.length).split('/')[0];
+        assert.ok(
+            Object.keys(dirs).includes(segment),
+            `href segment "${segment}" must be a staticDirs key (${Object.keys(dirs).join(', ')}) or the build never serves it`,
         );
 
-        const dirs = manifest.staticDirs || {};
+        const source = dirs[segment];
         assert.ok(
-            Object.values(dirs).includes('public'),
-            'plugin.json must declare staticDirs for public/, or the CSS is never copied into build/public',
-        );
-        assert.ok(
-            fs.existsSync(path.join(__dirname, '..', 'public', 'ranks.css')),
-            'the file the link points at must exist in the package',
+            fs.existsSync(path.join(__dirname, '..', source, 'ranks.css')),
+            `the file must exist at ${source}/ranks.css in the package`,
         );
     });
 

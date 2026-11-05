@@ -200,14 +200,16 @@ plugin.getLinkTags = async function (data) {
     // slash rather than reaching into internals.
     data.links.push({
         rel: 'stylesheet',
-        // `/assets` maps onto `build/public` (src/routes/index.js), and a plugin's
-        // own `public/` only lands there when plugin.json declares it under
-        // `staticDirs` - `Plugins.prepareForBuild` copies exactly the directories
-        // listed there and nothing else. Without that key the file exists in the
-        // package but is never served, so the link tag resolves to a 404 and the
-        // badges render unstyled with no error anywhere. Declared in plugin.json as
-        // {"public": "public"}.
-        href: `/assets/plugins/${pluginData.id}/ranks.css`,
+        // Two things have to agree for this to resolve, and getting either wrong
+        // produces a 404 with no error in any log - the page still renders, only
+        // the badges lose their styling.
+        //
+        // 1. `Plugins.prepareForBuild` copies only the directories named in
+        //    plugin.json's `staticDirs`, into build/public/plugins/<id>/.
+        // 2. The KEY in staticDirs becomes a path segment. `{"public": "public"}`
+        //    serves /assets/plugins/<id>/public/ranks.css, not /<id>/ranks.css,
+        //    which is why the key is `css` and the source is public/css.
+        href: `/assets/plugins/${pluginData.id}/css/ranks.css`,
     });
     return data;
 };
