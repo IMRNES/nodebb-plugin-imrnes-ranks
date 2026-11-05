@@ -4,6 +4,9 @@
   "description": "Custom rank titles based on post count, shown next to the username with unique colour + font per level, plus next-level progress",
   "library": "./library.js",
   "templates": "public/templates",
+  "staticDirs": {
+    "public": "public"
+  },
   "modules": {
     "../admin/plugins/imrnes-ranks.js": "public/js/admin.js"
   },

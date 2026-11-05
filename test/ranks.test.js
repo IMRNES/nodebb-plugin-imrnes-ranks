@@ -8,6 +8,7 @@
 
 const assert = require('node:assert');
 const path = require('node:path');
+const fs = require('node:fs');
 
 // The stored ladder lives in NodeBB's settings store, and the only way this
 // plugin reads it is `Meta.settings.get(nbbId)`. So the stub owns the value and
@@ -200,6 +201,38 @@ async function withLadder(levels, fn) {
         await new Promise((resolve) => plugin.getFields(data, resolve));
         assert.ok(data.fields.includes('imrnesRank'), 'imrnesRank must be exposed to API consumers');
         assert.ok(data.fields.includes('imrnesRankIdx'));
+    });
+
+    await test('getLinkTags points at a stylesheet the build will actually serve', async () => {
+        // The badge CSS is only reachable if two things agree: the href NodeBB
+        // renders, and the directory the build copies into build/public/plugins.
+        // The build copies exactly the directories named in plugin.json's
+        // `staticDirs` and nothing else, so a plugin whose CSS is referenced but
+        // whose plugin.json omits that key serves a 404 - silently, because the
+        // page still renders and only the styling is missing.
+        const data = { links: [] };
+        // getLinkTags takes only `data` and returns it: it is not one of the
+        // callback-style hooks, so awaiting the call is the whole contract.
+        const out = await plugin.getLinkTags(data);
+        const tag = out.links.find((l) => l.rel === 'stylesheet' && l.href.endsWith('ranks.css'));
+        assert.ok(tag, 'a ranks.css stylesheet link must be injected');
+
+        const manifest = require(path.join(__dirname, '..', 'plugin.json'));
+        assert.strictEqual(
+            tag.href,
+            `/assets/plugins/${manifest.id}/ranks.css`,
+            'the href must be rooted at the plugin id, which is where staticDirs lands',
+        );
+
+        const dirs = manifest.staticDirs || {};
+        assert.ok(
+            Object.values(dirs).includes('public'),
+            'plugin.json must declare staticDirs for public/, or the CSS is never copied into build/public',
+        );
+        assert.ok(
+            fs.existsSync(path.join(__dirname, '..', 'public', 'ranks.css')),
+            'the file the link points at must exist in the package',
+        );
     });
 
     console.log(`\n${passed} passed, ${failures.length} failed`);
